@@ -56,42 +56,40 @@ print(test_path)
 
 train_data, valid_y_data, test_y_data, n_user, n_item = data_load(train_path, valid_path, test_path)
 print(train_data.shape)
-#print(train_data.nbytes)
+# print(train_data.nbytes)
 
 data = train_data.todense().A
 print(data.shape)
 print(data.nbytes)
-#valid = valid_y_data.todense().A
-#test = test_y_data.todense().A
+# valid = valid_y_data.todense().A
+# test = test_y_data.todense().A
 #
 print("ints:", np.sum(np.sum(data, axis=1)))
 
 
+# 高阶连接编码器
 def get_2hop_item_based(data):
     # Initialize an empty tensor
-    sec_hop_infos = torch.empty(len(data), len(data[0]))
+    sec_hop_infos = torch.empty(len(data), len(data[0]))  # [n_user, n_item]
     print(sec_hop_infos.size())
 
-    # Loop to add data to the tensor
+    # 对所有用户的物品交互信息按列求和，得到一个物品的交互总数向量，然后除以用户数 n_user，计算每个物品的平均交互数
     sec_hop_inters = torch.sum(data, axis=0) / n_user
     for i, row in enumerate(data):
 
-        zero_indices = torch.nonzero(row<0.000001).t()#.squeeze()
+        zero_indices = torch.nonzero(row < 0.000001).t()  # .squeeze()
         if i % 1000 == 0:
-          print(i)
+            print(i)
 
         sec_hop_infos[i] = sec_hop_inters
         sec_hop_infos[i][zero_indices[0]] = 0
 
-    #tensor = torch.cat((data, sec_hop_infos), dim=1)  # Concatenate the data to the tensor
-
     return sec_hop_infos
 
-# Call the function
+
+# 提取每个用户的物品二跳信息
 hop2_rates_test = get_2hop_item_based(torch.tensor(data, dtype=torch.float32))
 
 # Print the resulting tensor
 print(hop2_rates_test.size())
 
-# filename = "datasets/yelp2018/two_hop_rates_items_yelp2018.pt"
-# torch.save(hop2_rates_test, filename)

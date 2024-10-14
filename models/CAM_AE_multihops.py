@@ -24,17 +24,21 @@ class CAM_AE_multihops(nn.Module):
         self.forward_layers = nn.ModuleList([nn.Linear(d_model, d_model) \
                                          for i in range(num_layers)])
 
-        self.dim_inters = 512   # The hidden dimension, correcting to k in the paper
-        self.first_hop_embedding = nn.Linear(1, d_model) # Expend dimension, correcting to d in the paper
+        self.dim_inters = 512   # 隐藏维度，对应于论文中的 k
+        # 一跳邻居的嵌入和解码层，对应于论文中的 d
+        self.first_hop_embedding = nn.Linear(1, d_model)
         self.first_hop_decoding = nn.Linear(d_model, 1)
+        # 二跳邻居和三跳邻居的嵌入层
         self.second_hop_embedding = nn.Linear(1, d_model)
         self.third_hop_embedding = nn.Linear(1, d_model)
+        # 输出层，结合时间嵌入和隐藏特征
         self.final_out = nn.Linear(self.dim_inters+emb_size, self.dim_inters)
 
         self.drop = nn.Dropout(dropout)
         self.drop1 = nn.Dropout(0.5)
         self.drop2 = nn.Dropout(dropout)
 
+        # 自编码器的编码器和解码器
         self.encoder = nn.Linear(self.in_dims, self.dim_inters)
         self.decoder = nn.Linear(self.dim_inters+emb_size, self.in_dims)
         self.encoder2 = nn.Linear(900, self.dim_inters)
@@ -51,19 +55,26 @@ class CAM_AE_multihops(nn.Module):
 
     def forward(self, x, x_sec_hop, timesteps):
 
-        x = self.encoder(x)
-        h_sec_hop = self.encoder(x_sec_hop[:, 0:self.in_dims]) #self.encoder(x_sec_hop[:, 0:6969]) #x_sec_hop[:, 0:2810]
-        h_third_hop = self.encoder(x_sec_hop[:, self.in_dims:]) #self.encoder(x_sec_hop[:, 6969:])
+        # Step 1: 编码一跳和二跳邻居信息
+        x = self.encoder(x)  # 对一跳邻居进行编码
+        h_sec_hop = self.encoder(x_sec_hop[:, 0:self.in_dims])  # 编码二跳邻居
+        h_third_hop = self.encoder(x_sec_hop[:, self.in_dims:])  # 编码三跳邻居
 
+        # Step 2: 生成时间步嵌入
         time_emb = timestep_embedding(timesteps, self.time_emb_dim).to(x.device)
-        emb = self.emb_layer(time_emb)
+        emb = self.emb_layer(time_emb)  # 映射到特定维度
+
+        # Step 3: 如果设置了归一化，则进行归一化
         if self.norm:
             x = F.normalize(x)
+
+        # Step 4: 将一跳邻居数据和时间嵌入拼接
         x = self.drop(x)
         h = torch.cat([x, emb], dim=-1)
         h = h.unsqueeze(-1)
         h = self.first_hop_embedding(h)
 
+        # Step 5: 处理二跳和三跳邻居信息
         h_sec_hop = torch.cat([h_sec_hop, emb], dim=-1)
         h_sec_hop = h_sec_hop.unsqueeze(-1)
         h_sec_hop = self.second_hop_embedding(h_sec_hop)
@@ -72,10 +83,11 @@ class CAM_AE_multihops(nn.Module):
         h_third_hop = h_third_hop.unsqueeze(-1)
         h_third_hop = self.third_hop_embedding(h_third_hop)
 
+        # 保存一跳邻居信息的副本
         h2 = h.clone()
 
+        # Step 6: 多层自注意力机制处理一跳和二跳邻居信息
         for i in range(self.num_layers):
-
             attention_layer = self.self_attentions[i]
             attention, attn_output_weights = attention_layer(h_sec_hop, h, h)
             attention = F.normalize(attention)
@@ -89,8 +101,8 @@ class CAM_AE_multihops(nn.Module):
             if i != self.num_layers - 1:
                 h = torch.tanh(h)
 
+        # Step 7: 多层自注意力机制处理三跳邻居信息
         for i in range(self.num_layers):
-
             attention_layer = self.self_attentions[i]
             attention, attn_output_weights = attention_layer(h_third_hop, h2, h2)
             attention = F.normalize(attention)
@@ -105,8 +117,11 @@ class CAM_AE_multihops(nn.Module):
             if i != self.num_layers - 1:
                 h2 = torch.tanh(h2)
 
+        # Step 8: 融合一跳和三跳邻居信息
         b = 0.9
-        h = b * h + (1-b) * h2
+        h = b * h + (1-b) * h2  # 融合一跳和三跳邻居的输出
+
+        # Step 9: 解码并输出
         h = self.first_hop_decoding(h)
         h = torch.squeeze(h)
         h = torch.tanh(h)
